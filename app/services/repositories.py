@@ -1,4 +1,6 @@
-from sqlalchemy import Select, func, select
+from datetime import UTC, datetime
+
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -9,9 +11,9 @@ from app.db.models import (
     BotSetting,
     Deal,
     DealStatus,
+    FavoriteGuarantor,
     GuarantorProfile,
     Report,
-    ReportStatus,
     Review,
     RoleAssignment,
     User,
@@ -38,8 +40,10 @@ async def get_user_by_tg(session: AsyncSession, telegram_id: int) -> User | None
 
 
 async def has_role(session: AsyncSession, user_id: int, role: UserRole, settings: Settings | None = None, telegram_id: int | None = None) -> bool:
-    if role == UserRole.ADMIN and settings and telegram_id == settings.main_admin_id:
+    if settings and telegram_id == settings.main_admin_id and role in {UserRole.ADMIN, UserRole.MAIN_ADMIN}:
         return True
+    if role == UserRole.MAIN_ADMIN:
+        return False
     exists = await session.scalar(select(RoleAssignment.id).where(RoleAssignment.user_id == user_id, RoleAssignment.role == role))
     return exists is not None
 
@@ -47,7 +51,7 @@ async def has_role(session: AsyncSession, user_id: int, role: UserRole, settings
 async def ensure_main_admin(session: AsyncSession, user: User, settings: Settings) -> None:
     if user.telegram_id != settings.main_admin_id:
         return
-    for role in (UserRole.USER, UserRole.ADMIN):
+    for role in (UserRole.USER, UserRole.ADMIN, UserRole.MAIN_ADMIN):
         exists = await session.scalar(select(RoleAssignment.id).where(RoleAssignment.user_id == user.id, RoleAssignment.role == role))
         if exists is None:
             session.add(RoleAssignment(user_id=user.id, role=role, granted_by_id=user.id))
@@ -81,7 +85,7 @@ async def log_event(
     payload: dict | None = None,
 ) -> None:
     session.add(AuditLog(event_type=event_type, severity=severity, actor_id=actor_id, target_user_id=target_user_id, deal_id=deal_id, payload=payload or {}))
-    await session.commit()
+    await session.flush()
 
 
 async def create_deal(session: AsyncSession, creator: User, data: dict, guarantor_id: int | None) -> Deal:
@@ -95,6 +99,7 @@ async def create_deal(session: AsyncSession, creator: User, data: dict, guaranto
         buyer_id=creator.id if side == "buyer" else None,
         seller_id=creator.id if side == "seller" else None,
         guarantor_id=guarantor_id,
+        pending_counterparty_tg_id=data.get("counterparty_tg_id"),
         status=DealStatus.WAITING_GROUP,
     )
     session.add(deal)
@@ -129,6 +134,18 @@ async def list_guarantors(session: AsyncSession, amount: float | None = None, on
     return list(result)
 
 
+async def bind_counterparty(session: AsyncSession, deal: Deal, user: User) -> None:
+    if user.id in {deal.buyer_id, deal.seller_id, deal.guarantor_id}:
+        return
+    if deal.buyer_id is None:
+        deal.buyer_id = user.id
+    elif deal.seller_id is None:
+        deal.seller_id = user.id
+    else:
+        raise ValueError("Both deal sides are already assigned")
+    await log_event(session, "deal.counterparty.joined", actor_id=user.id, deal_id=deal.id)
+
+
 async def confirm_group_entry(session: AsyncSession, deal: Deal, user: User) -> Deal:
     if deal.buyer_id == user.id:
         deal.buyer_confirmed_group = True
@@ -150,11 +167,12 @@ async def confirm_success(session: AsyncSession, deal: Deal, user: User) -> bool
     finished = deal.buyer_success_confirmed and deal.seller_success_confirmed
     if finished and deal.status != DealStatus.COMPLETED:
         deal.status = DealStatus.COMPLETED
-        deal.completed_at = func.now()
+        deal.completed_at = datetime.now(UTC)
         if deal.guarantor_id:
             profile = await session.scalar(select(GuarantorProfile).where(GuarantorProfile.user_id == deal.guarantor_id))
             if profile:
                 profile.successful_deals += 1
+        await log_event(session, "deal.completed", actor_id=user.id, deal_id=deal.id)
     await session.commit()
     return finished
 
@@ -164,6 +182,7 @@ async def create_report(session: AsyncSession, author: User, text: str, kind: st
     session.add(report)
     await session.flush()
     await log_event(session, f"report.{kind}.created", actor_id=author.id, deal_id=deal_id, payload={"text": text, "report_id": report.id})
+    await session.commit()
     return report
 
 
@@ -178,18 +197,66 @@ async def block_for_unpaid_cancel(session: AsyncSession, user: User, settings: S
     )
     session.add(block)
     await log_event(session, "user.blocked.unpaid_cancel", target_user_id=user.id, severity="warning", payload={"permanent": permanent})
+    await session.commit()
     return block
 
 
 async def add_review(session: AsyncSession, deal: Deal, author: User, stars: int, text: str | None = None) -> Review:
     if not deal.guarantor_id:
         raise ValueError("Deal has no guarantor")
-    review = Review(deal_id=deal.id, guarantor_id=deal.guarantor_id, author_id=author.id, stars=stars, text=text)
-    session.add(review)
+    review = await session.scalar(select(Review).where(Review.deal_id == deal.id, Review.author_id == author.id))
+    if review is None:
+        review = Review(deal_id=deal.id, guarantor_id=deal.guarantor_id, author_id=author.id, stars=stars, text=text)
+        session.add(review)
+    else:
+        review.stars = stars
+        review.text = text or review.text
+    await session.flush()
     profile = await session.scalar(select(GuarantorProfile).where(GuarantorProfile.user_id == deal.guarantor_id))
     if profile:
-        count = await session.scalar(select(func.count(Review.id)).where(Review.guarantor_id == deal.guarantor_id)) or 0
-        profile.rating = ((profile.rating * count) + stars) / (count + 1)
-        profile.reviews_count += 1
-    await log_event(session, "review.created", actor_id=author.id, deal_id=deal.id, payload={"stars": stars})
+        rows = await session.scalars(select(Review.stars).where(Review.guarantor_id == deal.guarantor_id))
+        values = list(rows)
+        profile.rating = sum(values) / len(values) if values else 0.0
+        profile.reviews_count = len(values)
+    await log_event(session, "review.created", actor_id=author.id, deal_id=deal.id, payload={"stars": stars, "has_text": bool(text)})
     return review
+
+
+async def list_staff(session: AsyncSession, settings: Settings) -> list[tuple[str, User]]:
+    stmt = select(User, RoleAssignment.role).join(RoleAssignment, RoleAssignment.user_id == User.id).where(
+        RoleAssignment.role.in_([UserRole.ADMIN, UserRole.MODERATOR])
+    )
+    rows = list((await session.execute(stmt)).all())
+    result: list[tuple[str, User]] = []
+    seen: set[int] = set()
+    main_admin = await get_user_by_tg(session, settings.main_admin_id)
+    if main_admin:
+        result.append(("Главный администратор", main_admin))
+        seen.add(main_admin.id)
+    for user, role in rows:
+        if user.id in seen:
+            continue
+        title = "Администратор" if role == UserRole.ADMIN else "Модератор"
+        result.append((title, user))
+        seen.add(user.id)
+    return result
+
+
+async def user_deals(session: AsyncSession, user_id: int, limit: int = 20) -> list[Deal]:
+    stmt = (
+        select(Deal)
+        .where((Deal.creator_id == user_id) | (Deal.buyer_id == user_id) | (Deal.seller_id == user_id) | (Deal.guarantor_id == user_id))
+        .order_by(Deal.created_at.desc())
+        .limit(limit)
+    )
+    return list(await session.scalars(stmt))
+
+
+async def favorite_guarantors(session: AsyncSession, user_id: int) -> list[GuarantorProfile]:
+    stmt = (
+        select(GuarantorProfile)
+        .join(FavoriteGuarantor, FavoriteGuarantor.guarantor_id == GuarantorProfile.user_id)
+        .where(FavoriteGuarantor.user_id == user_id)
+        .order_by(GuarantorProfile.rating.desc())
+    )
+    return list(await session.scalars(stmt))

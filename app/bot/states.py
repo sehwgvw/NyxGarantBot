@@ -10,6 +10,10 @@ class CreateDeal(StatesGroup):
     confirm = State()
 
 
+class ReviewState(StatesGroup):
+    text = State()
+
+
 class SupportState(StatesGroup):
     text = State()
 

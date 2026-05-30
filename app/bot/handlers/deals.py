@@ -9,10 +9,12 @@ from app.bot.keyboards import (
     deal_sides,
     group_confirmation,
     guarantor_choice,
+    guarantor_select,
+    join_deal,
     rating_keyboard,
     success_confirmation,
 )
-from app.bot.states import CreateDeal
+from app.bot.states import CreateDeal, ReviewState
 from app.bot.utils import send_banner
 from app.config import get_settings
 from app.db.models import Deal, DealStatus, User
@@ -20,11 +22,13 @@ from app.db.session import SessionLocal
 from app.services.group_provider import build_group_provider
 from app.services.repositories import (
     add_review,
+    bind_counterparty,
     choose_auto_guarantor,
     confirm_group_entry,
     confirm_success,
     create_deal,
     get_user_by_tg,
+    list_guarantors,
     log_event,
 )
 
@@ -52,7 +56,7 @@ async def deal_amount(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(amount=amount, currency="RUB")
     await state.set_state(CreateDeal.subject)
-    await message.answer("Опишите суть сделки: что передаётся, какие условия, за что отвечает гарант.")
+    await message.answer("Опишите суть сделки и, если знаете, Telegram ID второй стороны: что передаётся, какие условия, за что отвечает гарант.")
 
 
 @router.message(CreateDeal.subject)
@@ -86,6 +90,41 @@ async def deal_side(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(side=side)
     await state.set_state(CreateDeal.guarantor)
     await callback.message.answer("Выберите гаранта вручную или используйте автоподбор:", reply_markup=guarantor_choice())
+    await callback.answer()
+
+
+@router.callback_query(CreateDeal.guarantor, F.data == "menu:guarantors_for_deal")
+async def deal_manual_guarantor(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    async with SessionLocal() as session:
+        profiles = await list_guarantors(session, amount=float(data["amount"]))
+    if not profiles:
+        await callback.answer("Нет доступных гарантов под эту сумму сделки", show_alert=True)
+        return
+    await send_banner(callback.bot, callback.message.chat.id, "guarantors", "<b>Выберите гаранта для сделки</b>", reply_markup=guarantor_select(profiles))
+    await callback.answer()
+
+
+@router.callback_query(CreateDeal.guarantor, F.data.startswith("deal_guarantor_pick:"))
+async def deal_manual_guarantor_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    guarantor_user_id = int(callback.data.rsplit(":", 1)[1])
+    data = await state.get_data()
+    async with SessionLocal() as session:
+        guarantor = await session.get(User, guarantor_user_id)
+    if guarantor is None:
+        await callback.answer("Гарант не найден", show_alert=True)
+        return
+    await state.update_data(guarantor_id=guarantor.id, guarantor_tg=guarantor.telegram_id)
+    await state.set_state(CreateDeal.confirm)
+    await callback.message.answer(
+        "<b>Проверьте сделку</b>\n"
+        f"Сумма: <code>{data['amount']:g} ₽</code>\n"
+        f"Метод: {data['method']}\n"
+        f"Сторона: {data['side']}\n"
+        f"Гарант: @{guarantor.username or guarantor.telegram_id}\n\n"
+        "Создать сделку?",
+        reply_markup=confirm_deal(),
+    )
     await callback.answer()
 
 
@@ -133,7 +172,7 @@ async def deal_confirm(callback: CallbackQuery, state: FSMContext) -> None:
         "<b>Сделка создана</b>\n\n"
         f"Группа сделки: {created_group.invite_link}\n"
         "Покупатель, продавец и гарант должны перейти в группу и подтвердить вход кнопкой ниже.",
-        reply_markup=group_confirmation(deal.id),
+        reply_markup=join_deal(deal.id, created_group.invite_link),
     )
     await callback.answer("Сделка создана")
 
@@ -142,6 +181,25 @@ async def deal_confirm(callback: CallbackQuery, state: FSMContext) -> None:
 async def deal_cancel_create(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await send_banner(callback.bot, callback.message.chat.id, "cancel", "Создание сделки отменено.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("deal_join:"))
+async def deal_join(callback: CallbackQuery) -> None:
+    deal_id = int(callback.data.rsplit(":", 1)[1])
+    async with SessionLocal() as session:
+        user = await get_user_by_tg(session, callback.from_user.id)
+        deal = await session.get(Deal, deal_id)
+        if user is None or deal is None:
+            await callback.answer("Сделка не найдена", show_alert=True)
+            return
+        try:
+            await bind_counterparty(session, deal, user)
+            await session.commit()
+        except ValueError:
+            await callback.answer("Все стороны сделки уже назначены", show_alert=True)
+            return
+    await callback.message.answer("Вы привязаны к сделке. Теперь подтвердите вход в группу.", reply_markup=group_confirmation(deal_id))
     await callback.answer()
 
 
@@ -160,7 +218,7 @@ async def deal_group_confirm(callback: CallbackQuery) -> None:
             await log_event(session, "deal.activated", actor_id=user.id, deal_id=deal.id)
     if active:
         await group_provider.send_deal_commands(callback.bot, deal, str(banner_path("deal_commands").resolve()))
-        await callback.message.answer("Все участники подтвердили вход. Сделка активна.", reply_markup=success_confirmation(deal_id))
+        await send_banner(callback.bot, callback.message.chat.id, "active_deal", "Все участники подтвердили вход. Сделка активна.", reply_markup=success_confirmation(deal_id))
     else:
         await callback.message.answer("Ваш вход подтверждён. Ожидаем остальных участников.")
     await callback.answer()
@@ -195,7 +253,7 @@ async def deal_success(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("review:"))
-async def review(callback: CallbackQuery) -> None:
+async def review(callback: CallbackQuery, state: FSMContext) -> None:
     _, deal_id, stars = callback.data.split(":")
     async with SessionLocal() as session:
         user = await get_user_by_tg(session, callback.from_user.id)
@@ -205,11 +263,30 @@ async def review(callback: CallbackQuery) -> None:
             return
         await add_review(session, deal, user, int(stars))
         await session.commit()
-    await callback.message.answer("Спасибо за оценку гаранта!")
+    await state.set_state(ReviewState.text)
+    await state.update_data(review_deal_id=int(deal_id), review_stars=int(stars))
+    await callback.message.answer("Оценка сохранена. Можете отправить текстовый отзыв одним сообщением или нажать «Скрыть».")
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("review_hide:"))
-async def review_hide(callback: CallbackQuery) -> None:
+async def review_hide(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
     await callback.message.answer("Оценка скрыта. Вы можете оставить отзыв позже.")
     await callback.answer()
+
+
+@router.message(ReviewState.text)
+async def review_text(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    async with SessionLocal() as session:
+        user = await get_user_by_tg(session, message.from_user.id)
+        deal = await session.get(Deal, int(data["review_deal_id"]))
+        if user is None or deal is None:
+            await message.answer("Сделка не найдена")
+            await state.clear()
+            return
+        await add_review(session, deal, user, int(data["review_stars"]), message.text.strip() if message.text else None)
+        await session.commit()
+    await state.clear()
+    await message.answer("Спасибо за текстовый отзыв!")

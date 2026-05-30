@@ -2,13 +2,13 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from app.bot.handlers.support import parse_chat_id
 from app.bot.keyboards import report_actions
 from app.bot.utils import answer_banner
 from app.config import get_settings
 from app.db.models import Deal, DealStatus, RuchMember
 from app.db.session import SessionLocal
 from app.services.repositories import create_report, get_setting, get_user_by_tg, log_event
-from app.bot.handlers.support import parse_chat_id
 
 router = Router()
 settings = get_settings()
@@ -29,7 +29,12 @@ async def dispute(message: Message) -> None:
             await message.answer("Команда доступна только внутри группы сделки.")
             return
         deal.status = DealStatus.DISPUTE
-        await log_event(session, "deal.dispute.opened", actor_id=user.id, deal_id=deal.id)
+        report = await create_report(session, user, text="Открыт арбитраж сделки", kind="dispute", deal_id=deal.id)
+        await log_event(session, "deal.dispute.opened", actor_id=user.id, deal_id=deal.id, payload={"report_id": report.id})
+        moderation_group = await get_setting(session, "MODERATION_GROUP_ID", settings.moderation_group_id)
+        chat_id = parse_chat_id(moderation_group)
+        if chat_id:
+            await message.bot.send_message(chat_id, f"<b>Спор по сделке</b>\nСделка: {deal.id}", reply_markup=report_actions(report.id))
         await session.commit()
     await answer_banner(message, "dispute", "Арбитраж сделки открыт. Модераторы получат данные по спору.")
 

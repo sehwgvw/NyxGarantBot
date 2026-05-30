@@ -1,7 +1,9 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def main_menu(is_admin: bool = False, is_guarantor: bool = False, is_moderator: bool = False) -> InlineKeyboardMarkup:
+def main_menu(
+    is_admin: bool = False, is_guarantor: bool = False, is_moderator: bool = False
+) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="🤝 Создать сделку", callback_data="menu:create_deal")],
         [InlineKeyboardButton(text="🏆 Выбрать топ гаранта", callback_data="menu:top_guarantors")],
@@ -14,16 +16,26 @@ def main_menu(is_admin: bool = False, is_guarantor: bool = False, is_moderator: 
         [InlineKeyboardButton(text="👥 Команда проекта", callback_data="menu:staff")],
     ]
     if is_guarantor:
-        rows.append([InlineKeyboardButton(text="🧾 Кабинет гаранта", callback_data="menu:guarantor_cabinet")])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🧾 Кабинет гаранта", callback_data="menu:guarantor_cabinet"
+                )
+            ]
+        )
     if is_moderator:
-        rows.append([InlineKeyboardButton(text="🛎 Панель модератора", callback_data="menu:moderator")])
+        rows.append(
+            [InlineKeyboardButton(text="🛎 Панель модератора", callback_data="menu:moderator")]
+        )
     if is_admin:
         rows.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="menu:admin")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def back_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:start")]])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:start")]]
+    )
 
 
 def deal_methods() -> InlineKeyboardMarkup:
@@ -49,8 +61,16 @@ def deal_sides() -> InlineKeyboardMarkup:
 def guarantor_choice() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🎲 Автоподбор гаранта", callback_data="deal_guarantor:auto")],
-            [InlineKeyboardButton(text="🛡 Выбрать вручную", callback_data="menu:guarantors_for_deal")],
+            [
+                InlineKeyboardButton(
+                    text="🎲 Автоподбор гаранта", callback_data="deal_guarantor:auto"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🛡 Выбрать вручную", callback_data="menu:guarantors_for_deal"
+                )
+            ],
         ]
     )
 
@@ -66,26 +86,162 @@ def confirm_deal() -> InlineKeyboardMarkup:
 
 def group_confirmation(deal_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="✅ Я вошёл в группу", callback_data=f"deal_group_confirm:{deal_id}")]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Я вошёл в группу", callback_data=f"deal_group_confirm:{deal_id}"
+                )
+            ]
+        ]
     )
 
 
 def success_confirmation(deal_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="✅ Подтвердить успешность сделки", callback_data=f"deal_success:{deal_id}")]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить успешность сделки", callback_data=f"deal_success:{deal_id}"
+                )
+            ]
+        ]
     )
 
 
 def report_actions(report_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👁 Принять в работу", callback_data=f"report_take:{report_id}")],
-            [InlineKeyboardButton(text="✅ Проблема решена", callback_data=f"report_close:{report_id}")],
+            [
+                InlineKeyboardButton(
+                    text="👁 Принять в работу", callback_data=f"report_take:{report_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Проблема решена", callback_data=f"report_close:{report_id}"
+                )
+            ],
         ]
     )
 
 
 def rating_keyboard(deal_id: int) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="⭐" * stars, callback_data=f"review:{deal_id}:{stars}")] for stars in range(1, 6)]
+    rows = [
+        [InlineKeyboardButton(text="⭐" * stars, callback_data=f"review:{deal_id}:{stars}")]
+        for stars in range(1, 6)
+    ]
     rows.append([InlineKeyboardButton(text="Скрыть", callback_data=f"review_hide:{deal_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guarantors_list_keyboard(
+    items, mode: str, page: int, total: int, per_page: int
+) -> InlineKeyboardMarkup:
+    rows = []
+    for profile, user, is_favorite in items:
+        prefix = "⭐ " if is_favorite else ""
+        name = profile.display_username or user.username or user.full_name or str(user.telegram_id)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{prefix}🛡 {name}",
+                    callback_data=f"guarantor:card:{profile.user_id}:{mode}:{page}",
+                )
+            ]
+        )
+    nav = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(text="⬅️", callback_data=f"guarantors:list:{mode}:{page - 1}")
+        )
+    if (page + 1) * per_page < total:
+        nav.append(
+            InlineKeyboardButton(text="➡️", callback_data=f"guarantors:list:{mode}:{page + 1}")
+        )
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:start")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guarantor_card_keyboard(
+    guarantor_id: int, is_favorite: bool, origin: str, page: int
+) -> InlineKeyboardMarkup:
+    favorite_text = "⭐ Удалить из избранного" if is_favorite else "⭐ Добавить в избранное"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=favorite_text,
+                    callback_data=f"favorite:toggle:{guarantor_id}:{origin}:{page}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ К списку", callback_data=f"guarantors:list:{origin}:{page}"
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:start")],
+        ]
+    )
+
+
+def deals_list_keyboard(deals, page: int, total: int, per_page: int) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"Сделка #{deal.id} · {deal.amount:g} {deal.currency}",
+                callback_data=f"deal:card:{deal.id}:{page}",
+            )
+        ]
+        for deal in deals
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"deals:list:{page - 1}"))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"deals:list:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:start")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def deal_card_keyboard(page: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ К истории", callback_data=f"deals:list:{page}")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:start")],
+        ]
+    )
+
+
+def profile_keyboard(is_guarantor: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="📜 История сделок", callback_data="menu:history")],
+        [InlineKeyboardButton(text="⭐ Избранные гаранты", callback_data="menu:favorites")],
+    ]
+    if is_guarantor:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🧾 Кабинет гаранта", callback_data="menu:guarantor_cabinet"
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:start")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reviews_list_keyboard(page: int, total: int, per_page: int) -> InlineKeyboardMarkup:
+    rows = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"reviews:list:{page - 1}"))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"reviews:list:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🛡 Каталог гарантов", callback_data="menu:guarantors")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:start")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

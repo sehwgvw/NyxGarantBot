@@ -17,7 +17,11 @@ class UserbotClient:
         if not self.settings.api_id or not self.settings.api_hash:
             return None
         from telethon import TelegramClient
-        from telethon.functions.channels import CreateChannelRequest, ExportInviteRequest, InviteToChannelRequest
+        from telethon.functions.channels import (
+            CreateChannelRequest,
+            ExportInviteRequest,
+            InviteToChannelRequest,
+        )
 
         async with TelegramClient(str(self.settings.session_path), self.settings.api_id, self.settings.api_hash) as client:
             result = await client(CreateChannelRequest(title=title, about="Сделочная группа NyxGarant", megagroup=True))

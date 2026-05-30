@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -5,9 +7,15 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.keyboards import report_actions
 from app.bot.utils import answer_banner
 from app.config import get_settings
-from app.db.models import Report, ReportStatus
+from app.db.models import Report, ReportStatus, UserRole
 from app.db.session import SessionLocal
-from app.services.repositories import create_report, get_setting, get_user_by_tg, log_event
+from app.services.repositories import (
+    create_report,
+    get_setting,
+    get_user_by_tg,
+    has_role,
+    log_event,
+)
 
 router = Router()
 settings = get_settings()
@@ -61,9 +69,13 @@ async def report_take(callback: CallbackQuery) -> None:
         if user is None or report is None:
             await callback.answer("Репорт не найден", show_alert=True)
             return
+        if not (await has_role(session, user.id, UserRole.ADMIN, settings, callback.from_user.id) or await has_role(session, user.id, UserRole.MODERATOR)):
+            await callback.answer("Нет доступа", show_alert=True)
+            return
         report.assignee_id = user.id
         report.status = ReportStatus.IN_PROGRESS
         await log_event(session, "report.taken", actor_id=user.id, payload={"report_id": report.id})
+        await session.commit()
     await callback.message.edit_text(callback.message.html_text + "\n\n<b>В работе</b>")
     await callback.answer("Репорт принят в работу")
 
@@ -77,8 +89,13 @@ async def report_close(callback: CallbackQuery) -> None:
         if user is None or report is None:
             await callback.answer("Репорт не найден", show_alert=True)
             return
+        if not (await has_role(session, user.id, UserRole.ADMIN, settings, callback.from_user.id) or await has_role(session, user.id, UserRole.MODERATOR)):
+            await callback.answer("Нет доступа", show_alert=True)
+            return
         report.status = ReportStatus.CLOSED
         report.assignee_id = user.id
+        report.closed_at = datetime.now(UTC)
         await log_event(session, "report.closed", actor_id=user.id, payload={"report_id": report.id})
+        await session.commit()
     await callback.message.edit_text("репорт закрыт✅")
     await callback.answer("Репорт закрыт")

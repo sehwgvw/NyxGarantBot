@@ -6,9 +6,9 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.keyboards import main_menu
 from app.bot.utils import answer_banner, send_banner
 from app.config import get_settings
+from app.db.models import UserRole
 from app.db.session import SessionLocal
 from app.services.repositories import ensure_main_admin, get_user_by_tg, has_role, upsert_user
-from app.db.models import UserRole
 
 router = Router()
 settings = get_settings()

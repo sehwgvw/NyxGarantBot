@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import enum
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -12,7 +13,6 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -25,14 +25,15 @@ class Base(DeclarativeBase):
     pass
 
 
-class UserRole(str, enum.Enum):
+class UserRole(StrEnum):
     USER = "user"
     GUARANTOR = "guarantor"
     MODERATOR = "moderator"
     ADMIN = "admin"
+    MAIN_ADMIN = "main_admin"
 
 
-class DealStatus(str, enum.Enum):
+class DealStatus(StrEnum):
     DRAFT = "draft"
     WAITING_USER = "waiting_user"
     WAITING_GROUP = "waiting_group"
@@ -42,18 +43,18 @@ class DealStatus(str, enum.Enum):
     COMPLETED = "completed"
 
 
-class DealSide(str, enum.Enum):
+class DealSide(StrEnum):
     BUYER = "buyer"
     SELLER = "seller"
 
 
-class ReportStatus(str, enum.Enum):
+class ReportStatus(StrEnum):
     OPEN = "open"
     IN_PROGRESS = "in_progress"
     CLOSED = "closed"
 
 
-class BlockType(str, enum.Enum):
+class BlockType(StrEnum):
     TEMPORARY = "temporary"
     PERMANENT = "permanent"
 
@@ -140,6 +141,7 @@ class Deal(Base):
     buyer_success_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     seller_success_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    pending_counterparty_tg_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

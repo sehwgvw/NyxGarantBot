@@ -1,5 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.db.models import GuarantorProfile
+
 
 def main_menu(is_admin: bool = False, is_guarantor: bool = False, is_moderator: bool = False) -> InlineKeyboardMarkup:
     rows = [
@@ -55,6 +57,23 @@ def guarantor_choice() -> InlineKeyboardMarkup:
     )
 
 
+def guarantor_select(profiles: list[GuarantorProfile], *, prefix: str = "deal_guarantor_pick") -> InlineKeyboardMarkup:
+    rows = []
+    for profile in profiles[:20]:
+        name = profile.display_username or f"ID {profile.user_id}"
+        top = "🏆 " if profile.is_top else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{top}{name} · ⭐ {profile.rating:.2f} · {profile.successful_deals} сделок",
+                    callback_data=f"{prefix}:{profile.user_id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:start")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def confirm_deal() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -68,6 +87,14 @@ def group_confirmation(deal_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="✅ Я вошёл в группу", callback_data=f"deal_group_confirm:{deal_id}")]]
     )
+
+
+def join_deal(deal_id: int, invite_link: str | None = None) -> InlineKeyboardMarkup:
+    rows = []
+    if invite_link:
+        rows.append([InlineKeyboardButton(text="🔗 Перейти в группу сделки", url=invite_link)])
+    rows.append([InlineKeyboardButton(text="✅ Я участник сделки", callback_data=f"deal_join:{deal_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def success_confirmation(deal_id: int) -> InlineKeyboardMarkup:

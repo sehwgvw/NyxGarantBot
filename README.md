@@ -137,3 +137,44 @@ SESSION_PATH=sessions/nyx_userbot.session
 ```
 
 Session-файл создаётся владельцем аккаунта отдельно и хранится вне git.
+
+## Описание привязки баннеров списком
+
+- `assets/banners/start_banner.png` — `/start` и главное меню: стартовый экран с inline-навигацией по разделам.
+- `assets/banners/create_deal_banner.png` — мастер создания сделки: ввод суммы, сути сделки, метода, стороны и выбора гаранта.
+- `assets/banners/active_deal_banner.png` — момент, когда покупатель, продавец и гарант подтвердили вход, а сделка переведена в активный статус.
+- `assets/banners/success_banner.png` — завершение сделки после двух подтверждений сторон и экран оценки гаранта.
+- `assets/banners/cancel_banner.png` — отмена создания сделки или отменённая сделка.
+- `assets/banners/dispute_banner.png` — команда `/dispute` внутри сделочной группы и сценарии арбитража.
+- `assets/banners/scam_banner.png` — команда `/scam` внутри сделки, жалоба на скам/нарушение.
+- `assets/banners/support_banner.png` — команда `/support` и раздел центра поддержки.
+- `assets/banners/guarantors_banner.png` — каталог всех активных гарантов и ручной выбор гаранта для сделки.
+- `assets/banners/guarantor_profile_banner.png` — карточка конкретного гаранта с рейтингом, лимитами, комиссией и статусами.
+- `assets/banners/top_guarantors_banner.png` — раздел выбора ТОП-гаранта.
+- `assets/banners/favorites_banner.png` — личный список избранных гарантов пользователя.
+- `assets/banners/profile_banner.png` — личный кабинет пользователя, статусы, ограничения и последние сделки.
+- `assets/banners/history_banner.png` — история сделок пользователя.
+- `assets/banners/reviews_banner.png` — список отзывов и оценок пользователей по гарантам.
+- `assets/banners/guarantor_cabinet_banner.png` — кабинет гаранта: статистика, комиссия, лимиты, статусы.
+- `assets/banners/add_ruch_banner.png` — команда `/add_ruch` для добавления рученца в конкретную сделку.
+- `assets/banners/staff_banner.png` — список сотрудников проекта: главный админ, админы и модераторы.
+- `assets/banners/moderator_banner.png` — кабинет модератора и очередь support/report.
+- `assets/banners/admin_banner.png` — кабинет администратора, управление ролями, группами, настройками и гарантам.
+- `assets/banners/logs_banner.png` — просмотр структурированных системных журналов главным администратором.
+- `assets/banners/blocked_banner.png` — сообщение об ограничении доступа или отсутствии прав.
+- `assets/banners/waiting_user_banner.png` — ожидание подключения второго участника через `/start`/deep-link.
+- `assets/banners/waiting_group_banner.png` — сделка создана, ожидается вход/подтверждение покупателя, продавца и гаранта.
+- `assets/banners/deal_commands_banner.png` — закреплённое/служебное сообщение с командами управления внутри группы сделки.
+- `assets/banners/report_banner.png` — подтверждение, что support/report принят и передан модераторам.
+
+Бинарные изображения в репозиторий не добавляются: бот ожидает готовые PNG-файлы с указанными именами в `assets/banners/`. Если файла нет, соответствующий экран автоматически отправляется текстом без падения.
+
+## Что нужно сделать перед запуском на сервере
+
+Код не содержит токенов, session-файлов и готовых PNG-баннеров. Чтобы бот работал в продакшене, после деплоя нужно:
+
+1. Скопировать `.env.example` в `.env` и заполнить реальные `BOT_TOKEN`, `MAIN_ADMIN_ID`, `DATABASE_URL`, служебные группы и остальные параметры.
+2. Поднять PostgreSQL через `docker-compose` или указать внешний `DATABASE_URL`.
+3. Установить зависимости из `requirements.txt` или использовать Dockerfile.
+4. Положить готовые PNG-баннеры строго с именами из списка в `assets/banners/`.
+5. Для реального автосоздания приватных групп включить `USE_USERBOT=true`, указать `API_ID`, `API_HASH` и заранее созданный `SESSION_PATH` Telethon-аккаунта. Без userbot Telegram Bot API не может создавать группы сам — в этом режиме бот использует deep-link fallback для подключения участников к сделке.

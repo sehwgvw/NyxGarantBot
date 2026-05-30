@@ -3,12 +3,18 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from app.bot.keyboards import main_menu
+from app.bot.keyboards import group_confirmation, main_menu
 from app.bot.utils import answer_banner, send_banner
 from app.config import get_settings
+from app.db.models import Deal, UserRole
 from app.db.session import SessionLocal
-from app.services.repositories import ensure_main_admin, get_user_by_tg, has_role, upsert_user
-from app.db.models import UserRole
+from app.services.repositories import (
+    bind_counterparty,
+    ensure_main_admin,
+    get_user_by_tg,
+    has_role,
+    upsert_user,
+)
 
 router = Router()
 settings = get_settings()
@@ -37,6 +43,30 @@ async def start(message: Message, state: FSMContext) -> None:
             settings=settings,
         )
         await ensure_main_admin(session, user, settings)
+    payload = ""
+    if message.text:
+        payload = message.text.partition(" ")[2].strip()
+    if payload.startswith("join_"):
+        deal_id = int(payload.removeprefix("join_"))
+        async with SessionLocal() as session:
+            deal = await session.get(Deal, deal_id)
+            if deal is None:
+                await message.answer("Сделка не найдена.")
+                return
+            try:
+                await bind_counterparty(session, deal, user)
+                await session.commit()
+            except ValueError:
+                await message.answer("Все стороны сделки уже назначены.")
+                return
+        await answer_banner(
+            message,
+            "waiting_user",
+            "Вы подключены к сделке. Подтвердите вход после перехода в группу.",
+            reply_markup=group_confirmation(deal_id),
+        )
+        return
+
     is_admin, is_guarantor, is_moderator = await menu_flags(message.from_user.id)
     await answer_banner(
         message,
